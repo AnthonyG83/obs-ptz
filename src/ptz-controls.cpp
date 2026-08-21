@@ -17,7 +17,6 @@
 #include <QResizeEvent>
 #include <QDockWidget>
 #include <QStylePainter>
-#include <obs-scene.h>
 
 #include <qt-wrappers.hpp>
 #include "touch-control.hpp"
