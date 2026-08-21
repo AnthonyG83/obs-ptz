@@ -17,12 +17,14 @@
 #include <QResizeEvent>
 #include <QDockWidget>
 #include <QStylePainter>
+#include <obs-scene.h>
 
 #include <qt-wrappers.hpp>
 #include "touch-control.hpp"
 #include "ui_ptz-controls.h"
 #include "ptz-controls.hpp"
 #include "ptz-list-model.hpp"
+#include "ptz-visca.hpp"
 #include "settings.hpp"
 #include "ptz.h"
 
@@ -136,6 +138,7 @@ void PTZControls::handleFrontendEvent(enum obs_frontend_event event)
 		/* OBS is shutting down. It has already run its own save pass (and
 		 * so has called onFrontendSaveEvent()) as part of its shutdown
 		 * sequence, so just remove the PTZDevice instances here */
+		finishPresetBlackout();
 		while (!hotkeys.isEmpty())
 			obs_hotkey_unregister(hotkeys.takeFirst());
 		obs_frontend_remove_event_callback(onFrontendEvent, this);
@@ -175,6 +178,13 @@ PTZControls::PTZControls(QWidget *parent) : QFrame(parent), ui(new Ui::PTZContro
 {
 	instance = this;
 	ui->setupUi(this);
+	preset_blackout_fade_timer.setInterval(16);
+	preset_blackout_fade_timer.setTimerType(Qt::PreciseTimer);
+	preset_blackout_settle_timer.setSingleShot(true);
+	connect(&preset_blackout_fade_timer, &QTimer::timeout, this, &PTZControls::updatePresetBlackout);
+	connect(&preset_blackout_settle_timer, &QTimer::timeout, this, [this]() {
+		beginPresetBlackoutFadeOut();
+	});
 
 	/* Compatability: Before OBS Studio 31.1.0 the theme had left and right
 	 * margins on widgets which mess with the grid layout used by this
@@ -796,6 +806,7 @@ void PTZControls::accelTimerHandler()
 
 void PTZControls::setPanTilt(double pan, double tilt, double pan_accel_, double tilt_accel_)
 {
+	bool was_pantilting = pantiltingFlag;
 	pan_speed = pan;
 	tilt_speed = tilt;
 	pan_accel = pan_accel_;
@@ -812,6 +823,8 @@ void PTZControls::setPanTilt(double pan, double tilt, double pan_accel_, double 
 	calldata_set_float(&cd, "tilt", tilt_speed);
 	callCurrentDevice("ptz_move", &cd);
 	calldata_free(&cd);
+	if (was_pantilting && !pantiltingFlag)
+		autoSaveCurrentPreset();
 }
 
 void PTZControls::keypressPanTilt(double pan, double tilt)
@@ -839,6 +852,7 @@ void PTZControls::keypressPanTilt(double pan, double tilt)
  */
 void PTZControls::setZoom(double zoom)
 {
+	bool was_zooming = zoomingFlag;
 	auto modifiers = QGuiApplication::keyboardModifiers();
 	double speed = 0.5;
 	zoomingFlag = (zoom != 0.0);
@@ -848,10 +862,13 @@ void PTZControls::setZoom(double zoom)
 		speed = 0.1;
 
 	callCurrentDevice("ptz_move", "zoom", zoom * speed);
+	if (was_zooming && !zoomingFlag)
+		autoSaveCurrentPreset();
 }
 
 void PTZControls::setFocus(double focus)
 {
+	bool was_focusing = focusingFlag;
 	auto modifiers = QGuiApplication::keyboardModifiers();
 	double speed = 0.5;
 	focusingFlag = (focus != 0.0);
@@ -861,6 +878,8 @@ void PTZControls::setFocus(double focus)
 		speed = 0.1;
 
 	callCurrentDevice("ptz_move", "focus", focus * speed);
+	if (was_focusing && !focusingFlag)
+		autoSaveCurrentPreset();
 }
 
 /* The pan/tilt buttons are a large block of simple and mostly identical code.
@@ -952,6 +971,16 @@ void PTZControls::on_focusButton_onetouch_clicked()
 	callCurrentDevice("ptz_set", "focus_onetouch_trigger", true);
 }
 
+void PTZControls::on_irisButton_open_clicked()
+{
+	callCurrentDevice("ptz_set", "iris_adjust", 1LL);
+}
+
+void PTZControls::on_irisButton_close_clicked()
+{
+	callCurrentDevice("ptz_set", "iris_adjust", -1LL);
+}
+
 void PTZControls::setAutofocusEnabled(bool autofocus_on)
 {
 	ui->focusButton_auto->setChecked(autofocus_on);
@@ -966,6 +995,9 @@ void PTZControls::updateMoveControls()
 			 ui->cameraList->currentIndex().data(PTZListModel::IsLockedRole).toBool();
 
 	ui->movementControlsWidget->setEnabled(!is_locked);
+	bool supports_iris = dynamic_cast<PTZVisca *>(ptzDeviceList.getDevice(ui->cameraList->currentIndex()));
+	ui->irisButton_open->setVisible(supports_iris);
+	ui->irisButton_close->setVisible(supports_iris);
 	ui->cameraList->update();
 	ui->presetListView->setEnabled(!is_locked);
 
@@ -1010,7 +1042,151 @@ void PTZControls::presetSet(long long preset_id)
 
 void PTZControls::presetRecall(long long preset_id)
 {
-	callCurrentDevice("ptz_preset_recall", "preset_id", preset_id);
+	if (preset_id < 0)
+		return;
+	auto index = ui->cameraList->currentIndex();
+	if (!index.isValid())
+		return;
+	preset_blackout_device_id = index.data(PTZListModel::DeviceIdRole).toUInt();
+	pending_preset_recall = preset_id;
+	beginPresetBlackout();
+}
+
+void PTZControls::autoSaveCurrentPreset()
+{
+	auto index = ui->cameraList->currentIndex();
+	if (!index.isValid())
+		return;
+	auto preset = recalled_presets.value(index.data(PTZListModel::DeviceIdRole).toUInt(), -1);
+	if (preset >= 0)
+		presetSet(preset);
+}
+
+void PTZControls::setPresetBlackoutOpacity(int opacity)
+{
+	if (!preset_blackout_source)
+		return;
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "color", static_cast<uint32_t>(std::clamp(opacity, 0, 255)) << 24);
+	obs_source_update(preset_blackout_source, settings);
+}
+
+void PTZControls::beginPresetBlackout()
+{
+	/* A second recall during a transition supersedes the first one. */
+	if (preset_blackout_source) {
+		preset_blackout_phase = PresetBlackoutPhase::FadeIn;
+		preset_blackout_elapsed.restart();
+		preset_blackout_settle_timer.stop();
+		preset_blackout_fade_timer.start();
+		return;
+	}
+
+	OBSSourceAutoRelease scene_source = obs_frontend_preview_program_mode_active()
+					       ? obs_frontend_get_current_preview_scene()
+					       : obs_frontend_get_current_scene();
+	auto *scene = scene_source ? obs_scene_from_source(scene_source) : nullptr;
+	if (!scene) {
+		callCurrentDevice("ptz_preset_recall", "preset_id", pending_preset_recall);
+		auto index = ui->cameraList->currentIndex();
+		if (index.isValid())
+			recalled_presets[index.data(PTZListModel::DeviceIdRole).toUInt()] = pending_preset_recall;
+		pending_preset_recall = -1;
+		return;
+	}
+
+	obs_video_info ovi = {};
+	obs_get_video_info(&ovi);
+	OBSDataAutoRelease settings = obs_data_create();
+	obs_data_set_int(settings, "color", 0);
+	obs_data_set_int(settings, "width", ovi.base_width);
+	obs_data_set_int(settings, "height", ovi.base_height);
+	preset_blackout_source = obs_source_create_private("color_source", nullptr, settings);
+	if (!preset_blackout_source) {
+		callCurrentDevice("ptz_preset_recall", "preset_id", pending_preset_recall);
+		auto index = ui->cameraList->currentIndex();
+		if (index.isValid())
+			recalled_presets[index.data(PTZListModel::DeviceIdRole).toUInt()] = pending_preset_recall;
+		pending_preset_recall = -1;
+		return;
+	}
+	preset_blackout_item = obs_scene_add(scene, preset_blackout_source);
+	if (!preset_blackout_item) {
+		obs_source_release(preset_blackout_source);
+		preset_blackout_source = nullptr;
+		callCurrentDevice("ptz_preset_recall", "preset_id", pending_preset_recall);
+		auto index = ui->cameraList->currentIndex();
+		if (index.isValid())
+			recalled_presets[index.data(PTZListModel::DeviceIdRole).toUInt()] = pending_preset_recall;
+		pending_preset_recall = -1;
+		return;
+	}
+
+	preset_blackout_phase = PresetBlackoutPhase::FadeIn;
+	preset_blackout_elapsed.start();
+	preset_blackout_fade_timer.start();
+}
+
+void PTZControls::updatePresetBlackout()
+{
+	int elapsed = static_cast<int>(preset_blackout_elapsed.elapsed());
+	int opacity = std::min(255, (255 * elapsed) / preset_blackout_fade_ms);
+	if (preset_blackout_phase == PresetBlackoutPhase::FadeOut)
+		opacity = 255 - opacity;
+	setPresetBlackoutOpacity(opacity);
+	if (elapsed < preset_blackout_fade_ms)
+		return;
+
+	preset_blackout_fade_timer.stop();
+	if (preset_blackout_phase == PresetBlackoutPhase::FadeIn) {
+		auto *ptz = ptzDeviceList.getDevice(preset_blackout_device_id);
+		if (ptz) {
+			disconnect(preset_recall_finished_connection);
+			preset_recall_finished_connection = connect(ptz, &PTZDevice::presetRecallFinished, this, [this]() {
+				if (preset_blackout_waiting_for_completion)
+					beginPresetBlackoutFadeOut();
+			});
+		}
+		preset_blackout_waiting_for_completion = true;
+		callCurrentDevice("ptz_preset_recall", "preset_id", pending_preset_recall);
+		auto index = ui->cameraList->currentIndex();
+		if (index.isValid())
+			recalled_presets[index.data(PTZListModel::DeviceIdRole).toUInt()] = pending_preset_recall;
+		pending_preset_recall = -1;
+		if (preset_blackout_waiting_for_completion)
+			preset_blackout_settle_timer.start(preset_blackout_settle_ms);
+	} else {
+		finishPresetBlackout();
+	}
+}
+
+void PTZControls::beginPresetBlackoutFadeOut()
+{
+	if (!preset_blackout_source || preset_blackout_phase == PresetBlackoutPhase::FadeOut)
+		return;
+	preset_blackout_waiting_for_completion = false;
+	preset_blackout_settle_timer.stop();
+	preset_blackout_phase = PresetBlackoutPhase::FadeOut;
+	preset_blackout_elapsed.restart();
+	preset_blackout_fade_timer.start();
+}
+
+void PTZControls::finishPresetBlackout()
+{
+	preset_blackout_fade_timer.stop();
+	preset_blackout_settle_timer.stop();
+	if (preset_blackout_item) {
+		obs_sceneitem_remove(preset_blackout_item);
+		preset_blackout_item = nullptr;
+	}
+	if (preset_blackout_source) {
+		obs_source_release(preset_blackout_source);
+		preset_blackout_source = nullptr;
+	}
+	preset_blackout_phase = PresetBlackoutPhase::None;
+	preset_blackout_waiting_for_completion = false;
+	disconnect(preset_recall_finished_connection);
+	pending_preset_recall = -1;
 }
 
 void PTZControls::presetReset(long long preset_id)
@@ -1082,6 +1258,8 @@ void PTZControls::on_cameraList_customContextMenuRequested(const QPoint &pos)
 	QMenu context;
 	QAction *powerAction = nullptr;
 	QAction *wbOnetouchAction = nullptr;
+	QAction *irisOpenAction = nullptr;
+	QAction *irisCloseAction = nullptr;
 	bool power_on = false;
 
 	if (index.isValid()) {
@@ -1097,6 +1275,10 @@ void PTZControls::on_cameraList_customContextMenuRequested(const QPoint &pos)
 		bool wb_onepush = (calldata_int(&cd, "wb_mode") == 3);
 		if (wb_onepush)
 			wbOnetouchAction = context.addAction(obs_module_text("PTZ.Action.WhiteBalance.OnePushTrigger"));
+		if (dynamic_cast<PTZVisca *>(ptzDeviceList.getDevice(index))) {
+			irisOpenAction = context.addAction("Open iris");
+			irisCloseAction = context.addAction("Close iris");
+		}
 		context.addSeparator();
 
 		calldata_free(&cd);
@@ -1124,6 +1306,11 @@ void PTZControls::on_cameraList_customContextMenuRequested(const QPoint &pos)
 	} else if (action == wbOnetouchAction) {
 		calldata cd = {};
 		calldata_set_bool(&cd, "wb_onepush_trigger", true);
+		ptzDeviceList.callDevice(index, "ptz_set", &cd);
+		calldata_free(&cd);
+	} else if (action == irisOpenAction || action == irisCloseAction) {
+		calldata cd = {};
+		calldata_set_int(&cd, "iris_adjust", action == irisOpenAction ? 1 : -1);
 		ptzDeviceList.callDevice(index, "ptz_set", &cd);
 		calldata_free(&cd);
 	}

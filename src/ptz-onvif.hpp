@@ -71,6 +71,9 @@ private:
 	void ensureCapabilitiesRequested();
 
 	QTimer m_statusTimer;
+	QTimer m_presetStatusTimer;
+	bool m_presetRecallPending = false;
+	bool m_presetRecallSawMoving = false;
 	double m_position_pan = 0.0;
 	double m_position_tilt = 0.0;
 	double m_position_zoom = 0.0;

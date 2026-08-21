@@ -7,6 +7,7 @@
 #pragma once
 
 #include "ptz.h"
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QStyledItemDelegate>
 #include <obs.hpp>
@@ -63,6 +64,22 @@ private:
 	bool pantiltingFlag = false;
 	bool zoomingFlag = false;
 	bool focusingFlag = false;
+	QMap<uint32_t, int> recalled_presets;
+
+	/* Preset recalls have no protocol-independent completion notification. */
+	static constexpr int preset_blackout_fade_ms = 500;
+	static constexpr int preset_blackout_settle_ms = 1500;
+	enum class PresetBlackoutPhase { None, FadeIn, FadeOut };
+	QTimer preset_blackout_fade_timer;
+	QTimer preset_blackout_settle_timer;
+	QElapsedTimer preset_blackout_elapsed;
+	PresetBlackoutPhase preset_blackout_phase = PresetBlackoutPhase::None;
+	obs_source_t *preset_blackout_source = nullptr;
+	obs_sceneitem_t *preset_blackout_item = nullptr;
+	int pending_preset_recall = -1;
+	uint32_t preset_blackout_device_id = 0;
+	bool preset_blackout_waiting_for_completion = false;
+	QMetaObject::Connection preset_recall_finished_connection;
 
 	void copyActionsDynamicProperties();
 	void SaveConfig();
@@ -76,6 +93,12 @@ private:
 	void presetSet(long long id);
 	void presetRecall(long long id);
 	void presetReset(long long id);
+	void autoSaveCurrentPreset();
+	void beginPresetBlackout();
+	void updatePresetBlackout();
+	void finishPresetBlackout();
+	void beginPresetBlackoutFadeOut();
+	void setPresetBlackoutOpacity(int opacity);
 	void setAutofocusEnabled(bool autofocus_on);
 
 	bool callCurrentDevice(const char *method, calldata_t *cd = nullptr) const;
@@ -122,6 +145,8 @@ private slots:
 	void on_focusButton_far_pressed();
 	void on_focusButton_far_released();
 	void on_focusButton_onetouch_clicked();
+	void on_irisButton_open_clicked();
+	void on_irisButton_close_clicked();
 
 	void currentChanged(QModelIndex current, QModelIndex previous);
 	void settingsChanged(const QModelIndex &topleft, const QModelIndex &bottomRight);

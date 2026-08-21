@@ -289,6 +289,9 @@ void PTZOnvif::memory_recall(int i)
 	s.writeEndElement(); // Envelope
 	s.writeEndDocument();
 	sendRequest(m_PTZAddress, msg);
+	m_presetRecallPending = true;
+	m_presetRecallSawMoving = false;
+	m_presetStatusTimer.start();
 }
 
 void PTZOnvif::getPresets()
@@ -367,6 +370,21 @@ void PTZOnvif::handleGetStatusResponse(QDomNode node)
 	auto statusEl = node.toElement().firstChildElement("PTZStatus", nsOnvifPtz);
 	if (statusEl.isNull())
 		return;
+	auto moveEl = statusEl.firstChildElement("MoveStatus", nsOnvifSchema);
+	if (m_presetRecallPending && !moveEl.isNull()) {
+		auto panTiltStatus = moveEl.firstChildElement("PanTilt", nsOnvifSchema).text();
+		auto zoomStatus = moveEl.firstChildElement("Zoom", nsOnvifSchema).text();
+		bool moving = panTiltStatus.compare("MOVING", Qt::CaseInsensitive) == 0 ||
+			      zoomStatus.compare("MOVING", Qt::CaseInsensitive) == 0;
+		bool idle = panTiltStatus.compare("IDLE", Qt::CaseInsensitive) == 0 &&
+			    zoomStatus.compare("IDLE", Qt::CaseInsensitive) == 0;
+		m_presetRecallSawMoving = m_presetRecallSawMoving || moving;
+		if (m_presetRecallSawMoving && idle) {
+			m_presetRecallPending = false;
+			m_presetStatusTimer.stop();
+			emit presetRecallFinished();
+		}
+	}
 	auto posEl = statusEl.firstChildElement("Position", nsOnvifSchema);
 	if (posEl.isNull())
 		return;
@@ -746,6 +764,8 @@ PTZOnvif::PTZOnvif(OBSData config) : PTZDevice(config)
 		}
 	});
 	m_statusTimer.start();
+	m_presetStatusTimer.setInterval(200);
+	connect(&m_presetStatusTimer, &QTimer::timeout, this, [this]() { getStatus(); });
 	getDefaults(config);
 	update(config);
 }
