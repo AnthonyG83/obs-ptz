@@ -427,6 +427,38 @@
           </property>
          </widget>
         </item>
+        <item row="4" column="0" rowspan="1" colspan="2">
+         <widget class="QToolButton" name="irisButton_open">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>Open iris</string>
+          </property>
+          <property name="text">
+           <string>Open Iris</string>
+          </property>
+         </widget>
+        </item>
+        <item row="4" column="2" rowspan="1" colspan="2">
+         <widget class="QToolButton" name="irisButton_close">
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="toolTip">
+           <string>Close iris</string>
+          </property>
+          <property name="text">
+           <string>Close Iris</string>
+          </property>
+         </widget>
+        </item>
        </layout>
       </widget>
       <widget class="CircularListView" name="cameraList">

@@ -120,6 +120,12 @@ or select `Clear Preset` to reset the name back to default.
 
 Double click to recall a preset.
 
+When recalling a preset, the active output fades to black over 500 ms before
+the camera moves. VISCA cameras fade back in over 500 ms once their completion
+response arrives; cameras without completion feedback use a 1.5-second fallback.
+Any pan, tilt, zoom, or focus adjustment made after recalling a preset is saved
+back to that preset when the adjustment stops.
+
 ### Joystick Control
 
 To enable joystick control, select the `Joystick Control` check box on the

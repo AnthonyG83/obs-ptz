@@ -1,4 +1,5 @@
 name: Dispatch
+# Manual artifact builds are dispatched from the GitHub Actions UI or CLI.
 run-name: Dispatched Repository Actions - ${{ inputs.job }} ⌛️
 on:
   workflow_dispatch:

@@ -72,6 +72,8 @@ protected:
 signals:
 	void settingsChanged(OBSData settings);
 	void connectionStatusChanged(bool connected);
+	/* Emitted by drivers that can confirm a recalled preset has finished moving. */
+	void presetRecallFinished();
 
 public:
 	~PTZDevice();

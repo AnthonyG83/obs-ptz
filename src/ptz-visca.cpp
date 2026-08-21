@@ -718,7 +718,7 @@ void PTZVisca::receive(const QByteArray &msg)
 			active_cmd[0] = std::nullopt;
 		}
 		break;
-	case VISCA_RESPONSE_COMPLETED:
+	case VISCA_RESPONSE_COMPLETED: {
 		setConnected(true);
 		if (slot == 0)
 			timeout_timer.stop(); /* timer is only for slot 0 */
@@ -758,8 +758,15 @@ void PTZVisca::receive(const QByteArray &msg)
 			obs_data_release(rslt_props);
 		}
 
+		/* VISCA's completion response is the authoritative end of a preset
+		 * recall, so consumers can reveal video without guessing a duration. */
+		bool preset_recall_finished = active_cmd[slot]->cmd.size() >= 6 && active_cmd[slot]->cmd[3] == 0x3f &&
+					      active_cmd[slot]->cmd[4] == 0x02;
 		active_cmd[slot] = std::nullopt;
+		if (preset_recall_finished)
+			emit presetRecallFinished();
 		break;
+	}
 	case VISCA_RESPONSE_ERROR:
 		timeout_timer.stop();
 		/* This command failed, don't generate it again */
@@ -808,6 +815,10 @@ void PTZVisca::set(calldata_t *cd)
 	bool trigger;
 	if (calldata_get_bool(cd, "wb_onepush_trigger", &trigger) && trigger)
 		send(VISCA_CAM_WB_OnePushTrigger);
+
+	long long iris_adjust;
+	if (calldata_get_int(cd, "iris_adjust", &iris_adjust))
+		send(iris_adjust > 0 ? VISCA_CAM_Iris_Up : VISCA_CAM_Iris_Down);
 
 	PTZDevice::set(cd);
 }
