@@ -1086,7 +1086,7 @@ void PTZControls::beginPresetBlackout()
 					       : obs_frontend_get_current_scene();
 	auto *scene = scene_source ? obs_scene_from_source(scene_source) : nullptr;
 	if (!scene) {
-		callCurrentDevice("ptz_preset_recall", "preset_id", pending_preset_recall);
+		callCurrentDevice("ptz_preset_recall", "preset_id", static_cast<long long>(pending_preset_recall));
 		auto index = ui->cameraList->currentIndex();
 		if (index.isValid())
 			recalled_presets[index.data(PTZListModel::DeviceIdRole).toUInt()] = pending_preset_recall;
@@ -1102,7 +1102,7 @@ void PTZControls::beginPresetBlackout()
 	obs_data_set_int(settings, "height", ovi.base_height);
 	preset_blackout_source = obs_source_create_private("color_source", nullptr, settings);
 	if (!preset_blackout_source) {
-		callCurrentDevice("ptz_preset_recall", "preset_id", pending_preset_recall);
+		callCurrentDevice("ptz_preset_recall", "preset_id", static_cast<long long>(pending_preset_recall));
 		auto index = ui->cameraList->currentIndex();
 		if (index.isValid())
 			recalled_presets[index.data(PTZListModel::DeviceIdRole).toUInt()] = pending_preset_recall;
@@ -1113,7 +1113,7 @@ void PTZControls::beginPresetBlackout()
 	if (!preset_blackout_item) {
 		obs_source_release(preset_blackout_source);
 		preset_blackout_source = nullptr;
-		callCurrentDevice("ptz_preset_recall", "preset_id", pending_preset_recall);
+		callCurrentDevice("ptz_preset_recall", "preset_id", static_cast<long long>(pending_preset_recall));
 		auto index = ui->cameraList->currentIndex();
 		if (index.isValid())
 			recalled_presets[index.data(PTZListModel::DeviceIdRole).toUInt()] = pending_preset_recall;
@@ -1147,7 +1147,7 @@ void PTZControls::updatePresetBlackout()
 			});
 		}
 		preset_blackout_waiting_for_completion = true;
-		callCurrentDevice("ptz_preset_recall", "preset_id", pending_preset_recall);
+		callCurrentDevice("ptz_preset_recall", "preset_id", static_cast<long long>(pending_preset_recall));
 		auto index = ui->cameraList->currentIndex();
 		if (index.isValid())
 			recalled_presets[index.data(PTZListModel::DeviceIdRole).toUInt()] = pending_preset_recall;
