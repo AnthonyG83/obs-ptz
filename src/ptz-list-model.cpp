@@ -157,7 +157,7 @@ QVariant PTZListModel::data(const QModelIndex &index, int role) const
 		if (id < 0)
 			return QVariant();
 		if (role == Qt::DisplayRole) {
-		return QString();
+			return QString();
 		}
 		if (role == Qt::ToolTipRole) {
 			auto token = ptz->presetToken(id);

@@ -181,9 +181,7 @@ PTZControls::PTZControls(QWidget *parent) : QFrame(parent), ui(new Ui::PTZContro
 	preset_blackout_fade_timer.setTimerType(Qt::PreciseTimer);
 	preset_blackout_settle_timer.setSingleShot(true);
 	connect(&preset_blackout_fade_timer, &QTimer::timeout, this, &PTZControls::updatePresetBlackout);
-	connect(&preset_blackout_settle_timer, &QTimer::timeout, this, [this]() {
-		beginPresetBlackoutFadeOut();
-	});
+	connect(&preset_blackout_settle_timer, &QTimer::timeout, this, [this]() { beginPresetBlackoutFadeOut(); });
 
 	/* Compatability: Before OBS Studio 31.1.0 the theme had left and right
 	 * margins on widgets which mess with the grid layout used by this
@@ -1082,8 +1080,8 @@ void PTZControls::beginPresetBlackout()
 	}
 
 	OBSSourceAutoRelease scene_source = obs_frontend_preview_program_mode_active()
-					       ? obs_frontend_get_current_preview_scene()
-					       : obs_frontend_get_current_scene();
+						    ? obs_frontend_get_current_preview_scene()
+						    : obs_frontend_get_current_scene();
 	auto *scene = scene_source ? obs_scene_from_source(scene_source) : nullptr;
 	if (!scene) {
 		callCurrentDevice("ptz_preset_recall", "preset_id", static_cast<long long>(pending_preset_recall));
@@ -1141,10 +1139,11 @@ void PTZControls::updatePresetBlackout()
 		auto *ptz = ptzDeviceList.getDevice(preset_blackout_device_id);
 		if (ptz) {
 			disconnect(preset_recall_finished_connection);
-			preset_recall_finished_connection = connect(ptz, &PTZDevice::presetRecallFinished, this, [this]() {
-				if (preset_blackout_waiting_for_completion)
-					beginPresetBlackoutFadeOut();
-			});
+			preset_recall_finished_connection =
+				connect(ptz, &PTZDevice::presetRecallFinished, this, [this]() {
+					if (preset_blackout_waiting_for_completion)
+						beginPresetBlackoutFadeOut();
+				});
 		}
 		preset_blackout_waiting_for_completion = true;
 		callCurrentDevice("ptz_preset_recall", "preset_id", static_cast<long long>(pending_preset_recall));
